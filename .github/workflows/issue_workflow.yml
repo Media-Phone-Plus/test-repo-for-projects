@@ -16,8 +16,50 @@ jobs:
   move-assigned-card:
     runs-on: ubuntu-latest
     steps:
-      - uses: alex-page/github-project-automation-plus@7ffb872c64bd809d23563a130a0a97d01dfa8f43
+      - name: Move card to "In Progress" column
+        uses: actions/github-script@v5
         with:
-          project: Test Project
-          column: In Progress
-          repo-token: ${{ secrets.PAT }}
+          script: |
+            const { data: projects } = await github.projects.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+
+            const project = projects.find(proj => proj.name === "Test Project");
+
+            if (!project) {
+              console.log("Project not found.");
+              process.exit(1);
+            }
+
+            const { data: columns } = await github.projects.listColumns({
+              project_id: project.id,
+            });
+
+            const column = columns.find(col => col.name === "In Progress");
+
+            if (!column) {
+              console.log("Column not found.");
+              process.exit(1);
+            }
+
+            const { data: cards } = await github.projects.listCards({
+              column_id: column.id,
+            });
+
+            const issueNumber = context.payload.issue.number;
+            const card = cards.find(c => c.content_url.endsWith(`issues/${issueNumber}`));
+
+            if (!card) {
+              console.log("Card not found.");
+              process.exit(1);
+            }
+
+            await github.projects.moveCard({
+              card_id: card.id,
+              position: "top",
+              column_id: column.id,
+            });
+
+        env:
+          GITHUB_TOKEN: ${{ secrets.PAT }}

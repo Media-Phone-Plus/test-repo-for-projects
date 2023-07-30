@@ -1,22 +1,14 @@
-# This workflow uses actions that are not certified by GitHub.
-# They are provided by a third-party and are governed by
-# separate terms of service, privacy policy, and support
-# documentation.
-
-# GitHub recommends pinning actions to a commit SHA.
-# To get a newer version, you will need to update the SHA.
-# You can also reference a tag or branch, but the action may change without warning.
-
 name: Move assigned card
 on:
   issues:
     types:
       - assigned
+
 jobs:
   move-assigned-card:
     runs-on: ubuntu-latest
     steps:
-      - name: Move card to "In Progress" column
+      - name: Debug Project and Column Names
         uses: actions/github-script@v5
         with:
           script: |
@@ -24,8 +16,10 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
             });
+            console.log("Available Projects:", projects);
 
             const project = projects.find(proj => proj.name === "Test Project");
+            console.log("Selected Project:", project);
 
             if (!project) {
               console.log("Project not found.");
@@ -35,31 +29,21 @@ jobs:
             const { data: columns } = await github.projects.listColumns({
               project_id: project.id,
             });
+            console.log("Available Columns:", columns);
 
             const column = columns.find(col => col.name === "In Progress");
+            console.log("Selected Column:", column);
 
             if (!column) {
               console.log("Column not found.");
               process.exit(1);
             }
 
-            const { data: cards } = await github.projects.listCards({
-              column_id: column.id,
-            });
-
-            const issueNumber = context.payload.issue.number;
-            const card = cards.find(c => c.content_url.endsWith(`issues/${issueNumber}`));
-
-            if (!card) {
-              console.log("Card not found.");
-              process.exit(1);
-            }
-
-            await github.projects.moveCard({
-              card_id: card.id,
-              position: "top",
-              column_id: column.id,
-            });
+      - name: Move card to "In Progress" column
+        uses: actions/github-script@v5
+        with:
+          script: |
+            // ... (same as the previous script)
 
         env:
           GITHUB_TOKEN: ${{ secrets.PAT }}

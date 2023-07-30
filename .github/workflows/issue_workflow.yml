@@ -3,47 +3,12 @@ on:
   issues:
     types:
       - assigned
-
 jobs:
   move-assigned-card:
     runs-on: ubuntu-latest
     steps:
-      - name: Debug Project and Column Names
-        uses: actions/github-script@v5
+      - uses: alex-page/github-project-automation-plus@7ffb872c64bd809d23563a130a0a97d01dfa8f43
         with:
-          script: |
-            const { data: projects } = await github.projects.listForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-            });
-            console.log("Available Projects:", projects);
-
-            const project = projects.find(proj => proj.name === "Test Project");
-            console.log("Selected Project:", project);
-
-            if (!project) {
-              console.log("Project not found.");
-              process.exit(1);
-            }
-
-            const { data: columns } = await github.projects.listColumns({
-              project_id: project.id,
-            });
-            console.log("Available Columns:", columns);
-
-            const column = columns.find(col => col.name === "In Progress");
-            console.log("Selected Column:", column);
-
-            if (!column) {
-              console.log("Column not found.");
-              process.exit(1);
-            }
-
-      - name: Move card to "In Progress" column
-        uses: actions/github-script@v5
-        with:
-          script: |
-            // ... (same as the previous script)
-
-        env:
-          GITHUB_TOKEN: ${{ secrets.PAT }}
+          project: Test Project
+          column: In Progress
+          repo-token: ${{ secrets.PAT }}

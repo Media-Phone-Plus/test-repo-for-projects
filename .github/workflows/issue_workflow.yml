@@ -1,0 +1,127 @@
+name: Issue Workflow
+
+on:
+  issues:
+    types:
+      - opened
+      - edited
+      - reopened
+  pull_request_target:
+    types:
+      - opened
+      - synchronize
+      - closed
+
+jobs:
+  issue_progression:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get project ID
+        id: get_project_id
+        run: |
+          project_url=$(curl -X GET "https://api.github.com/repos/${{ github.repository }}/projects" -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" | jq '.[0].url')
+          project_id=$(echo "$project_url" | awk -F '/' '{print $NF}')
+          echo "::set-output name=project_id::$project_id"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get column ID for "🏗 In progress" column
+        id: get_doing_column_id
+        run: |
+          project_id=$(echo "${{ steps.get_project_id.outputs.project_id }}")
+          column_url=$(curl -X GET "https://api.github.com/projects/$project_id/columns" -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" | jq 'map(select(.name == "🏗 In progress")) | .[0].url')
+          column_id=$(echo "$column_url" | awk -F '/' '{print $NF}')
+          echo "::set-output name=doing_column_id::$column_id"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get column ID for "👀 In review" column
+        id: get_in_review_column_id
+        run: |
+          project_id=$(echo "${{ steps.get_project_id.outputs.project_id }}")
+          column_url=$(curl -X GET "https://api.github.com/projects/$project_id/columns" -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" | jq 'map(select(.name == "👀 In review")) | .[0].url')
+          column_id=$(echo "$column_url" | awk -F '/' '{print $NF}')
+          echo "::set-output name=in_review_column_id::$column_id"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get column ID for "✅ Done" column
+        id: get_done_column_id
+        run: |
+          project_id=$(echo "${{ steps.get_project_id.outputs.project_id }}")
+          column_url=$(curl -X GET "https://api.github.com/projects/$project_id/columns" -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" | jq 'map(select(.name == "✅ Done")) | .[0].url')
+          column_id=$(echo "$column_url" | awk -F '/' '{print $NF}')
+          echo "::set-output name=done_column_id::$column_id"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check if issue has a branch created
+        id: check_branch
+        run: |
+          issue_number=$(jq -r '.issue.number' $GITHUB_EVENT_PATH)
+          branch_name="issue-$issue_number"
+          git fetch origin "+refs/heads/$branch_name:refs/remotes/origin/$branch_name"
+          if git rev-parse --quiet --verify "refs/remotes/origin/$branch_name" >/dev/null; then
+            echo "::set-output name=branch_exists::true"
+            echo "::set-output name=branch_name::$branch_name"
+          else
+            echo "::set-output name=branch_exists::false"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GIT_SSH_COMMAND: 'ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no'
+          SSH_AUTH_SOCK: /tmp/ssh_agent.sock
+
+      - name: Move issue to "🏗 In progress" column
+        if: steps.check_branch.outputs.branch_exists == 'true'
+        run: |
+          issue_number=$(jq -r '.issue.number' $GITHUB_EVENT_PATH)
+          column_id=$(echo "${{ steps.get_doing_column_id.outputs.doing_column_id }}")
+          curl -X POST \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/projects/columns/$column_id/cards" \
+            -d "{\"content_id\": $issue_number, \"content_type\": \"Issue\"}"
+
+      - name: Check if pull request is open and ready for review
+        id: check_pull_request
+        run: |
+          issue_number=$(jq -r '.issue.number' $GITHUB_EVENT_PATH)
+          pull_request=$(gh pr list --base "issue-$issue_number" --state open --json number -q ".[0].number")
+          if [[ -n "$pull_request" ]]; then
+            echo "::set-output name=pull_request_exists::true"
+            echo "::set-output name=pull_request_number::$pull_request"
+          else
+            echo "::set-output name=pull_request_exists::false"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Move issue to "👀 In review" column
+        if: steps.check_pull_request.outputs.pull_request_exists == 'true'
+        run: |
+          pull_request_number=$(echo "${{ steps.check_pull_request.outputs.pull_request_number }}")
+          column_id=$(echo "${{ steps.get_in_review_column_id.outputs.in_review_column_id }}")
+          curl -X POST \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/projects/columns/$column_id/cards" \
+            -d "{\"content_id\": $pull_request_number, \"content_type\": \"PullRequest\"}"
+
+      - name: Move issue to "✅ Done" column
+        if: ${{ github.event.action == 'closed' || github.event.pull_request.merged == true }}
+        run: |
+          issue_number=$(jq -r '.issue.number' $GITHUB_EVENT_PATH)
+          pull_request=$(gh pr list --base "issue-$issue_number" --state all --json number -q ".[0].number")
+          if [[ -n "$pull_request" ]]; then
+            curl -X DELETE \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Accept: application/vnd.github.v3+json" \
+              "https://api.github.com/projects/columns/cards/$pull_request"
+          fi
+          curl -X DELETE \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/projects/columns/cards/${{ steps.get_doing_column_id.outputs.doing_column_id }}/cards/$issue_number"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
